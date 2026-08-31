@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+forecast-env/
+venv/
+.venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+kaggle.json
+.aws/
+# AWS IAM downloads credentials as <username>_accessKeys.csv - the previous
+# rule only matched the literal name "aws_credentials.csv" and missed it.
+*accessKeys*.csv
+*credentials*.csv
+credentials
+
+# Data and models (track in DVC or S3, not git)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+# Allow processed outputs needed by the Streamlit dashboard
+!data/processed/weekly_demand.csv
+!data/processed/scenarios.csv
+models/*.pkl
+models/*.joblib
+models/*.bin
+models/*.json
+!models/.gitkeep
+# Allow metrics JSON needed by the Streamlit dashboard
+!models/lgbm_metrics.json
+
+# Airflow
+airflow/logs/
+airflow/airflow.db
+airflow/airflow.cfg
+airflow/webserver_config.py
+
+# MLflow
+mlruns/
+mlflow.db
+
+# DVC
+.dvc/cache
+.dvc/tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml

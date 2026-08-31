@@ -1,0 +1,27 @@
+{
+  "model": "lightgbm",
+  "test_size_weeks": 12,
+  "mape": 11.1511,
+  "mae": 58.4359,
+  "rmse": 104.6271,
+  "best_iteration": 9,
+  "n_features": 17,
+  "train_weeks": 90,
+  "test_weeks": 12,
+  "train_start": "2015-09-21",
+  "train_end": "2017-06-05",
+  "test_start": "2017-06-12",
+  "test_end": "2017-08-28",
+  "top_features": {
+    "trend_signal": 13,
+    "rolling_std_4w": 11,
+    "lag_4w": 11,
+    "week_cos": 10,
+    "year": 7,
+    "lag_1w": 7,
+    "lag_8w": 5,
+    "lag_2w": 4,
+    "week_sin": 4,
+    "week_of_year": 3
+  }
+}
