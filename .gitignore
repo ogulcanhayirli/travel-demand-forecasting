@@ -31,6 +31,7 @@ kaggle.json
 credentials
 
 # Data and models (track in DVC or S3, not git)
+*.zip
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep

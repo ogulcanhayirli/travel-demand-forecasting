@@ -1,6 +1,14 @@
 # Travel Demand Forecasting Platform
 
-A production-grade travel demand forecasting system built for the AWS ML Engineer certification. It ingests hotel booking data, trains and compares multiple forecasting models, serves scenario-based 26-week forecasts, and is designed to run on AWS SageMaker with Apache Airflow orchestration.
+![CI](https://github.com/ogulcanhayirli/travel-demand-forecasting/actions/workflows/ci.yml/badge.svg)
+
+Weekly demand forecasting for hotel bookings, built to practise the parts of ML
+engineering that do not show up in a notebook: time-based validation that does not
+leak, an automated promotion rule that refuses to ship models whose improvement is
+within noise, and a retraining pipeline that runs without anyone remembering to run it.
+
+The dataset is public and modest. What is being demonstrated is the surrounding
+engineering, not the forecast accuracy.
 
 **Live demo:** [travel-demand-forecasting.streamlit.app](https://travel-demand-forecasting.streamlit.app)
 
@@ -53,7 +61,13 @@ Kaggle Hotel Booking Data
 | Model      | MAPE   | MAE          | RMSE  | Test Period        |
 |------------|--------|--------------|-------|--------------------|
 | LightGBM   | 11.15% | 58 bookings  | 105   | Jun 2017 - Aug 2017|
-| Prophet    | TBD (runs on SageMaker — CmdStan not available on macOS Apple Silicon) | | | |
+| Prophet    | not yet evaluated | — | — | — |
+
+LightGBM is the current champion. Prophet is implemented and ready to run as the
+challenger but has not yet been evaluated, because CmdStan does not build on Apple
+Silicon and the SageMaker run is pending. The promotion logic and its tests are
+exercised against synthetic metric pairs in `tests/`, so the champion-challenger
+rule is verified even though the second model's numbers are outstanding.
 
 The LightGBM model is trained on 90 weeks of data with 17 features. Top predictors are `trend_signal` (short vs long-term momentum), `lag_4w` (monthly autocorrelation), and `week_cos` (cyclical seasonality encoding).
 
