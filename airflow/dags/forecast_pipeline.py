@@ -71,8 +71,9 @@ def ingest_data(**context):
     """Upload the latest weekly_demand.csv to S3.
 
     In a real pipeline this task would first pull fresh booking data from
-    the source database, run the aggregation to produce weekly_demand.csv,
-    then upload. Here we upload the existing processed file.
+    the source database and run src/data/build_weekly_demand.py (which drops
+    any week not fully covered by the extract), then upload. Here we upload
+    the existing processed file.
     """
     import boto3
 
