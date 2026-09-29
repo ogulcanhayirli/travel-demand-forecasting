@@ -1,11 +1,11 @@
 # Travel Demand Forecasting Platform
 
-![CI](https://github.com/ogulcanhayirli/travel-demand-forecasting/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/ogulcanhayirli/travel-demand-forecasting/actions/workflows/ci.yml/badge.svg)](https://github.com/ogulcanhayirli/travel-demand-forecasting/actions/workflows/ci.yml)
 
 Weekly demand forecasting for hotel bookings, built to practise the parts of ML
 engineering that do not show up in a notebook: time-based validation that does not
-leak, an automated promotion rule that refuses to ship models whose improvement is
-within noise, and a retraining pipeline that runs without anyone remembering to run it.
+leak, honest comparison against naive baselines, and an automated promotion rule that
+refuses to ship models whose improvement is within noise.
 
 The dataset is public and modest. What is being demonstrated is the surrounding
 engineering, not the forecast accuracy.
@@ -16,24 +16,40 @@ engineering, not the forecast accuracy.
 
 ## Business Problem
 
-Travel platforms need accurate, scenario-aware demand forecasts to drive financial planning, budgeting, and resource allocation. Finance teams want a single source of truth that produces pessimistic, baseline, and optimistic views of weekly booking volumes, with a transparent retraining policy they can trust.
+Travel platforms need scenario-aware demand forecasts to drive financial planning, budgeting, and resource allocation. Finance teams want a single source of truth that produces pessimistic, baseline, and optimistic views of weekly booking volumes, with a transparent retraining policy they can trust.
 
-This platform answers: *"How many bookings should we plan for over the next 6 months, and what are the upside and downside scenarios?"*
+This project answers: *"How many bookings should we plan for over the next 6 months, and what are the upside and downside scenarios?"*
 
 ---
 
 ## What This System Does
 
-1. Ingests hotel booking records and aggregates them into a weekly demand time series
+1. Aggregates hotel booking records into a weekly series of non-cancelled arrivals, keeping only weeks fully covered by the data
 2. Engineers lag, rolling statistics, and calendar features for gradient boosting
-3. Trains two competing models: Prophet (additive seasonality) and LightGBM (lag features)
-4. Runs a champion-challenger evaluation — the new model is only promoted if it beats the current one by at least 2 MAPE percentage points
+3. Trains two competing models, LightGBM (lag features) and Prophet (additive seasonality), and scores both against naive baselines on the same test weeks
+4. Runs a champion-challenger rule: the challenger is only promoted if it beats the champion by at least 2 MAPE percentage points
 5. Produces three 26-week scenario forecasts (pessimistic, baseline, optimistic) via recursive multi-step inference
-6. Serves everything through an interactive Streamlit dashboard with a downloadable forecast table
+6. Serves everything through a Streamlit dashboard with a downloadable forecast table
+
+---
+
+## Status
+
+| Component | State |
+|-----------|-------|
+| Weekly aggregation, features, LightGBM, Prophet, baselines, champion-challenger rule | Implemented and run locally; results below |
+| Scenario forecasts and Streamlit dashboard | Implemented and run locally |
+| Unit tests | 36 tests, run by GitHub Actions on every push and pull request |
+| SageMaker Script Mode entry points (`sagemaker/`) | Written and run locally through their fallback paths. **Not yet run on SageMaker.** |
+| Airflow DAG (`airflow/dags/`) | Defined. **Not yet run**: it depends on the SageMaker jobs, and the Model Registry step only logs |
+| Drift monitoring (`src/monitoring/`) | Not implemented yet. PSI is computed in the EDA notebook only |
 
 ---
 
 ## Architecture
+
+The intended production flow. Only the local path (aggregation, training, evaluation,
+scenarios, dashboard) has been run so far.
 
 ```
 Kaggle Hotel Booking Data
@@ -42,14 +58,14 @@ Kaggle Hotel Booking Data
     S3 (raw + processed)
           |
           v
-  Airflow DAG (runs every Monday 06:00 UTC)
+  Airflow DAG (scheduled for Mondays 06:00 UTC)
           |
     ingest -> validate -> train_lgbm  \
                        -> train_prophet -> evaluate -> branch
                                                          |
                                               promote or retain champion
                                                          |
-                                               SageMaker Model Registry
+                                  SageMaker Model Registry (stub, logs only)
                                                          |
                                             Streamlit Dashboard (public)
 ```
@@ -58,24 +74,64 @@ Kaggle Hotel Booking Data
 
 ## Models and Results
 
-| Model      | MAPE   | MAE          | RMSE  | Test Period        |
-|------------|--------|--------------|-------|--------------------|
-| LightGBM   | 11.15% | 58 bookings  | 105   | Jun 2017 - Aug 2017|
-| Prophet    | not yet evaluated | — | — | — |
+All models are scored on the same 12 held-out weeks, 5 June 2017 to 21 August 2017.
 
-LightGBM is the current champion. Prophet is implemented and ready to run as the
-challenger but has not yet been evaluated, because CmdStan does not build on Apple
-Silicon and the SageMaker run is pending. The promotion logic and its tests are
-exercised against synthetic metric pairs in `tests/`, so the champion-challenger
-rule is verified even though the second model's numbers are outstanding.
+| Model                          | MAPE  | MAE  | RMSE | How the test weeks are forecast               |
+|--------------------------------|-------|------|------|-----------------------------------------------|
+| Naive: last week (lag 1)       | 5.27% | 38.1 | 54.3 | One week ahead                                |
+| LightGBM (champion)            | 5.75% | 42.4 | 53.8 | One week ahead, lag features read from actuals|
+| Prophet (challenger)           | 7.66% | 57.6 | 82.8 | 1 to 12 weeks ahead, no test data seen        |
+| Naive: same week last year     | 8.72% | 65.3 | 81.6 | Uses the actual from 52 weeks earlier         |
 
-The LightGBM model is trained on 90 weeks of data with 17 features. Top predictors are `trend_signal` (short vs long-term momentum), `lag_4w` (monthly autocorrelation), and `week_cos` (cyclical seasonality encoding).
+Numbers come from `models/lgbm_metrics.json`, `models/prophet_metrics.json` and
+`models/promotion_decision.json`, all produced by the code in this repo.
+
+**What the table says.** On this 12-week window, LightGBM does not beat the naive
+"last week" forecast on MAPE or MAE; it is only marginally better on RMSE. Weekly
+arrivals in summer 2017 were stable, so persistence is a strong baseline, and 12
+weeks is a small sample for separating models that are this close. Prophet is not
+directly comparable to the other rows: it forecasts all 12 weeks from the end of the
+training period, whereas the others see the actual value of every previous week.
+Prophet also warns that its yearly seasonality is fitted on under two years of
+history (693 days).
+
+**Promotion decision.** Prophet's MAPE is 1.90 points worse than LightGBM's, so the
+rule retains LightGBM as champion. LightGBM therefore drives the scenario forecasts.
+
+The LightGBM model uses 17 features and 88 training weeks. The tree count (39) is
+chosen by early stopping on the last 12 of those weeks, and the model is then refit on
+all 88. The most used features (by number of splits) are `rolling_std_4w`, `week_cos`
+and `lag_1w`.
+
+---
+
+## Engineering Fixes Worth Knowing About
+
+**Partial weeks.** The raw extract runs from Wednesday 1 July 2015 to Thursday
+31 August 2017, so the first and last Monday-start weeks contained only a few days of
+arrivals. The last one (379 arrivals against roughly 720 in the weeks before it) sat
+in the test set and was the starting point for the recursive scenario forecast.
+`src/data/build_weekly_demand.py` now keeps only weeks whose seven days all fall inside
+the data range, by rule rather than by a hardcoded date, and a test covers it. The
+series is 112 complete weeks.
+
+**Early stopping on the test set.** An earlier version passed the test weeks to
+LightGBM's early stopping, so the number of trees was chosen by looking at test data.
+Early stopping now uses a validation window at the end of the training period. The
+previously reported LightGBM figure (11.15% MAPE) came from that setup and the partial
+week, and is superseded by the table above.
+
+**Train/serve skew in scenarios.** The scenario generator built rolling features one
+week staler than training did. Inference features are now built by one function that
+a test checks against the training features for every week.
 
 ---
 
 ## Scenario Analysis
 
-Three scenarios are generated from the trained LightGBM model using recursive one-step-ahead forecasting:
+Three scenarios are generated from the champion LightGBM model using recursive
+one-step-ahead forecasting, starting the week after the last complete week
+(28 August 2017):
 
 | Scenario    | Demand Multiplier | Use Case                          |
 |-------------|-------------------|-----------------------------------|
@@ -83,11 +139,14 @@ Three scenarios are generated from the trained LightGBM model using recursive on
 | Baseline    | 1.00x             | Central forecast, budget target   |
 | Optimistic  | 1.20x             | Upside planning, capacity ceiling |
 
+The multipliers are fixed planning assumptions, not statistically derived intervals.
+
 ---
 
 ## Feature Engineering
 
-All features are constructed to avoid target leakage — rolling statistics use `shift(1)` so the current week's value is never visible to the model at training time.
+All features are constructed to avoid target leakage. Rolling statistics use `shift(1)`
+so the current week's value is never visible to the model at training time.
 
 | Feature Group     | Features                                                        |
 |-------------------|-----------------------------------------------------------------|
@@ -102,20 +161,26 @@ All features are constructed to avoid target leakage — rolling statistics use 
 
 ```
 travel-demand-forecasting/
+  .github/workflows/
+    ci.yml              Runs pytest on push and pull request
   data/
     processed/          weekly_demand.csv, scenarios.csv (committed for dashboard)
   notebooks/
-    01_eda.ipynb        Senior-level EDA: stationarity, decomposition, PSI, leakage audit
+    01_eda.ipynb        EDA: data checks, stationarity, decomposition, PSI, leakage audit
   src/
+    data/
+      build_weekly_demand.py  Raw bookings to weekly series, complete weeks only
     features/
       build_features.py Lag, rolling, and calendar feature engineering
     models/
       metrics.py        Shared MAPE, MAE, RMSE (no heavy dependencies)
-      train_lightgbm.py LightGBM trainer with early stopping
-      train_prophet.py  Prophet trainer (runs on SageMaker)
+      train_lightgbm.py LightGBM trainer with early stopping and naive baselines
+      train_prophet.py  Prophet trainer
       evaluate.py       Champion-challenger logic with 2pp MAPE threshold
     scenarios/
       scenario_generator.py  26-week recursive forecast, 3 scenario tracks
+    monitoring/
+      drift_detector.py Placeholder, not implemented yet
   sagemaker/
     train_lgbm.py       SageMaker entry point for LightGBM (/opt/ml contract)
     train_prophet.py    SageMaker entry point for Prophet
@@ -125,12 +190,15 @@ travel-demand-forecasting/
       forecast_pipeline.py  Weekly DAG: ingest, validate, train, evaluate, branch
   dashboard/
     app.py              Streamlit scenario explorer with Plotly charts
-    requirements.txt    Dashboard-only dependencies for Streamlit Cloud
-  tests/
-    test_features.py    20 unit tests: features, leakage guard, metrics
+    requirements.txt    Pinned dashboard dependencies for Streamlit Cloud
+  tests/                36 unit tests: aggregation, features, leakage, baselines,
+                        scenario features, metrics, promotion rule
   models/
-    lgbm_metrics.json   Latest evaluation metrics (committed for dashboard)
-  requirements.txt      Full project dependencies
+    lgbm_metrics.json        LightGBM and naive baseline metrics
+    prophet_metrics.json     Prophet metrics
+    promotion_decision.json  Champion-challenger decision
+  requirements-dev.txt  Minimal dependencies to run the tests
+  requirements.txt      Full project dependencies (includes Airflow, SageMaker SDK, MLflow)
 ```
 
 ---
@@ -138,22 +206,26 @@ travel-demand-forecasting/
 ## How to Run Locally
 
 ```bash
-# 1. Create and activate virtual environment
-python -m venv forecast-env
+# 1. Create and activate a Python 3.11 virtual environment
+python3.11 -m venv forecast-env
 source forecast-env/bin/activate
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 2. Install what the local pipeline needs (requirements.txt also pulls in
+#    Airflow, MLflow and the SageMaker SDK, which are not needed here)
+pip install -r requirements-dev.txt -r dashboard/requirements.txt prophet
 
 # 3. Pull the dataset (requires Kaggle API key)
 kaggle datasets download -d jessemostipak/hotel-booking-demand -p data/raw
 unzip data/raw/hotel-booking-demand.zip -d data/raw/
 
-# 4. Run EDA and generate processed data
-jupyter lab notebooks/01_eda.ipynb
+# 4. Build the weekly series (complete weeks only)
+python src/data/build_weekly_demand.py
 
-# 5. Train LightGBM
+# 5. Train both models and run the promotion rule
 python src/models/train_lightgbm.py
+python src/models/train_prophet.py
+python src/models/evaluate.py --champion models/lgbm_metrics.json \
+    --challenger models/prophet_metrics.json --output models/promotion_decision.json
 
 # 6. Generate scenario forecasts
 python src/scenarios/scenario_generator.py
@@ -164,19 +236,21 @@ streamlit run dashboard/app.py
 
 ---
 
-## How to Run on AWS SageMaker
+## SageMaker
+
+`sagemaker/train_lgbm.py` and `sagemaker/train_prophet.py` are Script Mode entry
+points that follow the `/opt/ml` directory contract and call the same training
+functions as the local scripts. They have been run locally through their fallback
+paths and reproduce the metrics above. **They have not yet been run on SageMaker.**
+Before a first cloud run, the job needs the `src/` package and the lightgbm/prophet
+dependencies available inside the SKLearn container; `launch_training_job.py`
+currently uploads only the `sagemaker/` directory.
 
 ```bash
 # Configure AWS credentials (aws configure) and copy .env.example to .env first
-
-# Train LightGBM on a managed ml.m5.large instance
 python sagemaker/launch_training_job.py --model lgbm
-
-# Train Prophet (compiles cleanly on Amazon Linux 2)
 python sagemaker/launch_training_job.py --model prophet
-
-# Train both in parallel
-python sagemaker/launch_training_job.py --model both
+python sagemaker/launch_training_job.py --model both   # one after the other
 ```
 
 ---
@@ -184,8 +258,8 @@ python sagemaker/launch_training_job.py --model both
 ## Running Tests
 
 ```bash
-pytest tests/ -v
-# 20 tests covering feature engineering, leakage prevention, and metric functions
+pip install -r requirements-dev.txt
+pytest -v
 ```
 
 ---
@@ -194,31 +268,48 @@ pytest tests/ -v
 
 | Layer              | Technology                                      |
 |--------------------|-------------------------------------------------|
-| Modelling          | Prophet, LightGBM                               |
+| Modelling          | LightGBM, Prophet                               |
 | Feature engineering| pandas, numpy                                   |
-| Cloud training     | AWS SageMaker (Script Mode, SKLearn container)  |
-| Artifact storage   | AWS S3                                          |
-| Orchestration      | Apache Airflow (weekly DAG, BranchPythonOperator)|
 | Dashboard          | Streamlit, Plotly                               |
-| Testing            | pytest (20 unit tests)                          |
-| Infrastructure     | AWS IAM, SageMaker Execution Role               |
+| Testing and CI     | pytest, GitHub Actions                          |
+| Cloud training     | AWS SageMaker Script Mode (entry points written, not yet run) |
+| Orchestration      | Apache Airflow (DAG defined, not yet run)       |
 
 ---
 
 ## Key Design Decisions
 
-**Time-based train/test split** — never random for time series. The last 12 weeks are held out as the test set, simulating real forecast evaluation.
+**Time-based train/test split.** Never random for time series. The last 12 weeks are
+held out as the test set, and early stopping uses a separate window at the end of the
+training period, so the test weeks play no part in model selection.
 
-**Champion-challenger promotion threshold** — the challenger must beat the champion by at least 2 MAPE percentage points, not just marginally better. This prevents promoting models whose improvement is within noise.
+**Naive baselines on the same test weeks.** A model is only interesting if it beats
+"same as last week" and "same as last year". Both are stored next to the model metrics
+and shown on the dashboard.
 
-**Lag selection** — the 52-week lag was excluded because it drops the first year of data as NaN warmup rows. With only ~2 years of data, this halved the training set and caused severe underfitting (best_iteration=2). Lags at 1, 2, 4, 8, 12 weeks provide short and medium-range autocorrelation without sacrificing data.
+**Champion-challenger promotion threshold.** The challenger must beat the champion by
+at least 2 MAPE percentage points, not just marginally. This prevents promoting models
+whose improvement is within noise. The Airflow DAG calls the same tested function.
 
-**Sine/cosine week encoding** — raw week number (1-52) would tell the model that week 52 and week 1 are 51 steps apart. Sine/cosine encoding makes them adjacent, which is correct.
+**Complete weeks only.** Aggregating to weeks is only valid when every week has seven
+days of data; the rule is derived from the data range, not a hardcoded date.
 
-**Shared metrics module** — MAPE, MAE, and RMSE live in `src/models/metrics.py` with no heavy dependencies so they can be imported and unit tested without installing lightgbm or prophet.
+**Lag selection.** A 52-week lag feature was left out because it turns the first
+52 weeks into NaN warmup rows. With 112 weeks of data, that would leave 48 training
+weeks after the 12-week test split. The same-week-last-year signal is still evaluated,
+as a naive baseline.
+
+**Sine/cosine week encoding.** A raw week number (1 to 52) tells the model that week 52
+and week 1 are 51 steps apart. Sine/cosine encoding makes them adjacent.
+
+**Shared metrics module.** MAPE, MAE, and RMSE live in `src/models/metrics.py` with no
+heavy dependencies so they can be imported and unit tested on their own.
 
 ---
 
 ## Data
 
-Kaggle Hotel Booking Demand dataset (Mostipak, 2020) — 119,390 bookings from a Portuguese city hotel and resort hotel, covering July 2015 to August 2017. Aggregated to 114 weeks of non-cancelled weekly arrivals.
+Kaggle Hotel Booking Demand dataset (Mostipak, 2020): 119,390 bookings from a
+Portuguese city hotel and resort hotel, with arrivals from 1 July 2015 to
+31 August 2017. Aggregated to 112 complete weeks of non-cancelled arrivals
+(6 July 2015 to 21 August 2017).
