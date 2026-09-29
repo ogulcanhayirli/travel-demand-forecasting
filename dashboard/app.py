@@ -3,7 +3,8 @@
 Streamlit app that shows:
   1. Historical weekly demand with a 26-week scenario forecast
   2. Three scenario tracks: pessimistic, baseline, optimistic
-  3. Model metrics card (LightGBM holdout evaluation)
+  3. Model metrics card (LightGBM holdout evaluation) with naive baselines
+     and the Prophet challenger result
   4. Feature importance bar chart
   5. Raw scenario table for export
 
@@ -34,6 +35,8 @@ st.set_page_config(
 DATA_PATH = Path("data/processed/weekly_demand.csv")
 SCENARIOS_PATH = Path("data/processed/scenarios.csv")
 LGBM_METRICS_PATH = Path("models/lgbm_metrics.json")
+PROPHET_METRICS_PATH = Path("models/prophet_metrics.json")
+DECISION_PATH = Path("models/promotion_decision.json")
 
 # ---------------------------------------------------------------------------
 # Data loaders (cached so re-renders don't re-read disk)
@@ -51,9 +54,9 @@ def load_scenarios() -> pd.DataFrame:
 
 
 @st.cache_data
-def load_metrics() -> dict:
-    if LGBM_METRICS_PATH.exists():
-        with open(LGBM_METRICS_PATH) as f:
+def load_json(path: Path) -> dict:
+    if path.exists():
+        with open(path) as f:
             return json.load(f)
     return {}
 
@@ -72,7 +75,7 @@ st.sidebar.markdown("---")
 history_window = st.sidebar.slider(
     "Weeks of history to show",
     min_value=12,
-    max_value=114,
+    max_value=len(load_history()),
     value=52,
     step=4,
 )
@@ -82,7 +85,10 @@ history_window = st.sidebar.slider(
 # ---------------------------------------------------------------------------
 history = load_history()
 scenarios = load_scenarios()
-metrics = load_metrics()
+metrics = load_json(LGBM_METRICS_PATH)
+prophet_metrics = load_json(PROPHET_METRICS_PATH)
+decision = load_json(DECISION_PATH)
+baselines = metrics.get("baselines", {})
 
 history_trimmed = history.tail(history_window)
 
@@ -91,7 +97,7 @@ history_trimmed = history.tail(history_window)
 # ---------------------------------------------------------------------------
 st.title("✈️ Travel Demand Forecasting Platform")
 st.markdown(
-    "Weekly hotel booking demand — historical actuals and 26-week scenario forecasts "
+    "Weekly hotel booking demand: historical actuals and 26-week scenario forecasts "
     "produced by a LightGBM model with lag and calendar features."
 )
 
@@ -103,20 +109,26 @@ with col1:
     st.metric("Model", metrics.get("model", "LightGBM").upper())
 with col2:
     mape = metrics.get("mape")
-    st.metric("MAPE (test)", f"{mape:.2f}%" if mape else "N/A")
+    lag1 = baselines.get("naive_lag1", {}).get("mape")
+    st.metric(
+        "MAPE (test)",
+        f"{mape:.2f}%" if mape is not None else "N/A",
+        delta=f"{mape - lag1:+.2f}pp vs last-week naive" if mape is not None and lag1 is not None else None,
+        delta_color="inverse",
+    )
 with col3:
     mae = metrics.get("mae")
-    st.metric("MAE (test)", f"{mae:.0f} bookings" if mae else "N/A")
+    st.metric("MAE (test)", f"{mae:.0f} bookings" if mae is not None else "N/A")
 with col4:
     rmse = metrics.get("rmse")
-    st.metric("RMSE (test)", f"{rmse:.0f}" if rmse else "N/A")
+    st.metric("RMSE (test)", f"{rmse:.0f}" if rmse is not None else "N/A")
 
 st.markdown("---")
 
 # ---------------------------------------------------------------------------
 # Main forecast chart
 # ---------------------------------------------------------------------------
-st.subheader("📈 Demand Forecast — Scenario Explorer")
+st.subheader("📈 Demand Forecast: Scenario Explorer")
 
 fig = go.Figure()
 
@@ -192,7 +204,7 @@ fig.update_layout(
     margin=dict(t=40, b=40),
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 # ---------------------------------------------------------------------------
 # Feature importance + metrics detail side by side
@@ -216,25 +228,26 @@ with col_left:
             marker_color="#1f77b4",
         ))
         fig_feat.update_layout(
-            xaxis_title="Importance (split gain)",
+            xaxis_title="Importance (number of splits)",
             yaxis_title="",
             height=320,
             margin=dict(t=20, b=20, l=10, r=10),
         )
-        st.plotly_chart(fig_feat, use_container_width=True)
+        st.plotly_chart(fig_feat, width="stretch")
     else:
         st.info("Run `python src/models/train_lightgbm.py` to generate feature importance.")
 
 with col_right:
     st.subheader("📋 Model Training Details")
     if metrics:
+        # All values are strings so the column has one type for Arrow
         detail_rows = {
             "Train period": f"{metrics.get('train_start')} → {metrics.get('train_end')}",
             "Test period": f"{metrics.get('test_start')} → {metrics.get('test_end')}",
-            "Train weeks": metrics.get("train_weeks"),
-            "Test weeks": metrics.get("test_weeks"),
-            "Features": metrics.get("n_features"),
-            "Best iteration": metrics.get("best_iteration"),
+            "Train weeks": str(metrics.get("train_weeks")),
+            "Test weeks": str(metrics.get("test_weeks")),
+            "Features": str(metrics.get("n_features")),
+            "Best iteration": str(metrics.get("best_iteration")),
             "MAPE": f"{metrics.get('mape'):.2f}%",
             "MAE": f"{metrics.get('mae'):.1f} bookings",
             "RMSE": f"{metrics.get('rmse'):.1f}",
@@ -242,6 +255,41 @@ with col_right:
         st.table(pd.DataFrame.from_dict(detail_rows, orient="index", columns=["Value"]))
     else:
         st.info("No metrics file found. Train the model first.")
+
+st.markdown("---")
+
+# ---------------------------------------------------------------------------
+# Model comparison on the same test weeks
+# ---------------------------------------------------------------------------
+st.subheader("⚖️ Model Comparison (same 12 test weeks)")
+
+comparison = []
+if metrics:
+    comparison.append(("LightGBM (champion)", metrics, "1 week ahead, lags from actuals"))
+for key, label in (("naive_lag1", "Naive: last week"), ("naive_lag52", "Naive: same week last year")):
+    if key in baselines:
+        comparison.append((label, baselines[key], "1 week ahead"))
+if prophet_metrics:
+    comparison.append(("Prophet (challenger)", prophet_metrics,
+                       prophet_metrics.get("forecast_horizon", "")))
+
+if comparison:
+    comparison_df = pd.DataFrame(
+        [
+            {
+                "Model": label,
+                "MAPE": f"{m['mape']:.2f}%",
+                "MAE": f"{m['mae']:.1f}",
+                "RMSE": f"{m['rmse']:.1f}",
+                "Horizon": horizon,
+            }
+            for label, m, horizon in comparison
+        ]
+    ).set_index("Model")
+    st.table(comparison_df)
+if decision:
+    st.caption(f"Promotion rule (challenger must beat champion by ≥ "
+               f"{decision['min_improvement_threshold_pp']:.0f} MAPE points): {decision['reason']}")
 
 st.markdown("---")
 
@@ -263,7 +311,7 @@ st.dataframe(
     display_df.style
         .format({"Pessimistic": "{:.1f}", "Baseline": "{:.1f}", "Optimistic": "{:.1f}"})
         .background_gradient(subset=["Baseline"], cmap="Blues"),
-    use_container_width=True,
+    width="stretch",
     height=400,
 )
 
