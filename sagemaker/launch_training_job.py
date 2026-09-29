@@ -10,10 +10,10 @@ Usage
     # Train LightGBM only (fast, runs locally too):
     python sagemaker/launch_training_job.py --model lgbm
 
-    # Train Prophet only (requires SageMaker; CmdStan works on Amazon Linux):
+    # Train Prophet only:
     python sagemaker/launch_training_job.py --model prophet
 
-    # Train both in parallel:
+    # Train both, one after the other:
     python sagemaker/launch_training_job.py --model both
 
 Prerequisites

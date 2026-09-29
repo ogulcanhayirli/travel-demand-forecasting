@@ -208,19 +208,20 @@ def evaluate_models(**context):
 
     # Treat LightGBM as champion (current production model),
     # Prophet as challenger (newly trained). This is arbitrary for the
-    # first run — in production, the champion is whichever model is
+    # first run. In production, the champion is whichever model is
     # currently registered as APPROVED in SageMaker Model Registry.
-    champion = lgbm_metrics
-    challenger = prophet_metrics
+    # Run the same tested rule as src/models/evaluate.py (>= 2pp MAPE).
+    import tempfile
 
-    if challenger["mape"] < champion["mape"] - 2.0:
-        promote = True
-        log.info(f"PROMOTE: Prophet MAPE {challenger['mape']:.2f}% beats "
-                 f"LightGBM {champion['mape']:.2f}% by >2pp")
-    else:
-        promote = False
-        log.info(f"RETAIN: LightGBM MAPE {champion['mape']:.2f}% — "
-                 f"Prophet {challenger['mape']:.2f}% does not meet threshold")
+    with tempfile.TemporaryDirectory() as tmp:
+        champion_path = Path(tmp) / "champion.json"
+        challenger_path = Path(tmp) / "challenger.json"
+        champion_path.write_text(json.dumps(lgbm_metrics))
+        challenger_path.write_text(json.dumps(prophet_metrics))
+        decision = evaluate_champion_challenger(
+            str(champion_path), str(challenger_path), str(Path(tmp) / "decision.json")
+        )
+    promote = decision["promote"]
 
     context["ti"].xcom_push(key="promote", value=promote)
     context["ti"].xcom_push(key="winning_model", value="prophet" if promote else "lgbm")

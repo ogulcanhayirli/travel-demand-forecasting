@@ -1,0 +1,15 @@
+{
+  "promote": false,
+  "champion_model": "lightgbm",
+  "challenger_model": "prophet",
+  "champion_mape": 5.7519,
+  "challenger_mape": 7.6561,
+  "delta_mape_pp": -1.9042,
+  "min_improvement_threshold_pp": 2.0,
+  "champion_mae": 42.3961,
+  "challenger_mae": 57.6047,
+  "champion_rmse": 53.8329,
+  "challenger_rmse": 82.7653,
+  "secondary_warning": null,
+  "reason": "Challenger prophet is worse than champion lightgbm by 1.90pp MAPE. RETAIN CHAMPION."
+}

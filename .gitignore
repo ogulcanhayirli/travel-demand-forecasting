@@ -44,8 +44,10 @@ models/*.joblib
 models/*.bin
 models/*.json
 !models/.gitkeep
-# Allow metrics JSON needed by the Streamlit dashboard
+# Allow metrics and promotion decision JSON needed by the Streamlit dashboard
 !models/lgbm_metrics.json
+!models/prophet_metrics.json
+!models/promotion_decision.json
 
 # Airflow
 airflow/logs/

@@ -19,7 +19,6 @@ from pathlib import Path
 import sys
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from prophet import Prophet
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -76,12 +75,12 @@ def train_prophet(
     model.fit(train)
 
     # --- Forecast on test period ---
-    future = model.make_future_dataframe(periods=test_size, freq="W")
-    forecast = model.predict(future)
-    test_forecast = forecast.tail(test_size)
+    # Predict on the test weeks' own Monday dates. make_future_dataframe with
+    # freq="W" would generate Sundays, one day off the weekly grid.
+    forecast = model.predict(test[["ds"]])
 
     y_true = test["y"].values
-    y_pred = test_forecast["yhat"].values
+    y_pred = forecast["yhat"].values
     y_pred = np.maximum(y_pred, 0)  # clip negative forecasts to zero
 
     # --- Compute metrics ---
@@ -97,6 +96,9 @@ def train_prophet(
         "train_end": str(train["ds"].max().date()),
         "test_start": str(test["ds"].min().date()),
         "test_end": str(test["ds"].max().date()),
+        # Unlike the LightGBM evaluation, which reads each week's lags from
+        # actuals, Prophet sees no test data: weeks are 1 to test_size ahead.
+        "forecast_horizon": f"1-{test_size} weeks ahead",
     }
     log.info(f"Prophet metrics: MAPE={metrics['mape']:.2f}%  MAE={metrics['mae']:.1f}  RMSE={metrics['rmse']:.1f}")
 

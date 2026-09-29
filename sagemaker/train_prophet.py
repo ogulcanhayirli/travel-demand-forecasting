@@ -1,8 +1,7 @@
 """SageMaker training entry point for Prophet.
 
 Identical contract to train_lgbm.py but calls train_prophet instead.
-Prophet is trained on SageMaker (Amazon Linux 2) rather than locally
-because CmdStan compiles cleanly on that platform.
+The same function also runs locally: `python src/models/train_prophet.py`.
 
 Instance recommendation: ml.m5.large (2 vCPU, 8 GB RAM).
 Prophet training on ~100 weeks of data completes in under 2 minutes.
