@@ -3,20 +3,19 @@
 Wraps a trained LightGBM model and applies pessimistic, baseline, and
 optimistic multipliers to produce three parallel forecast tracks.
 
-The scenarios are deliberately simple and transparent: finance teams
-understand and trust a clearly-labelled percentage adjustment far more
-than opaque distributional sampling. The 80/100/120 multipliers are
-calibrated against the historical demand range seen in the EDA.
+The scenarios are deliberately simple and transparent: a fixed 0.80x /
+1.00x / 1.20x adjustment to the baseline forecast. They are planning
+assumptions, not statistically derived intervals.
 
 Design decisions
 ----------------
-* LightGBM is used here (not Prophet) because it runs locally without
-  CmdStan. When Prophet is available (SageMaker), it should be preferred
-  for the baseline because its uncertainty intervals (yhat_lower/yhat_upper)
-  naturally express scenario width. We apply the same multiplier logic.
+* LightGBM is used because it is the current champion (see
+  models/promotion_decision.json). Prophet was evaluated as the challenger
+  and did not clear the promotion threshold.
 * Recursive one-step-ahead forecasting: each predicted week is fed back
   as a lag feature for the next week. This is standard for multi-step
-  ahead inference with lag-based models.
+  ahead inference with lag-based models. The forecast starts after the
+  last week in weekly_demand.csv, which only contains complete weeks.
 * We clip negative predictions to zero. Negative bookings are impossible.
 * Output is a CSV with columns: week_start, pessimistic, baseline, optimistic.
   This format is what the Streamlit dashboard reads directly.
@@ -36,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.features.build_features import create_lag_features, get_feature_columns
+from src.features.build_features import get_feature_columns
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -48,66 +47,34 @@ SCENARIOS = {
 }
 
 FORECAST_WEEKS = 26  # 6-month forward look
+LAGS = (1, 2, 4, 8, 12)  # must match get_feature_columns
 
 
-def _make_future_features(history: pd.DataFrame, forecast_weeks: int) -> pd.DataFrame:
-    """Extend the historical feature frame by rolling one-step-ahead predictions.
+def next_week_features(y_history: list[float], week_start: pd.Timestamp) -> dict:
+    """Build one feature row for `week_start` from the weeks before it.
 
-    Parameters
-    ----------
-    history : Feature-engineered DataFrame including all lag and calendar cols.
-              Must already have the 'y' column with actuals.
-    forecast_weeks : How many weeks to forecast forward.
-
-    Returns
-    -------
-    DataFrame of length forecast_weeks with feature columns populated.
-    Each row's lag features are built from the predicted (or actual) values
-    that came before it.
+    `y_history` ends with the week immediately before `week_start`. The
+    values match what create_lag_features computes for the same week in
+    training (tests/test_scenarios.py checks this), so the model sees the
+    same inputs at inference as it was trained on.
     """
-    feature_cols = get_feature_columns()
-    # Start from last known date
-    last_date = history["ds"].max()
-
-    future_rows = []
-    # Rolling buffer of y values (actuals then predictions) used to build lags
-    y_buffer = list(history["y"].values)
-
-    for week_offset in range(1, forecast_weeks + 1):
-        future_date = last_date + pd.Timedelta(weeks=week_offset)
-        dt = pd.Timestamp(future_date)
-
-        # Build a minimal row dict with calendar features
-        row = {
-            "ds": future_date,
-            "week_of_year": int(dt.isocalendar().week),
-            "month": dt.month,
-            "quarter": dt.quarter,
-            "year": dt.year,
-            "is_peak_season": int(dt.month in [6, 7, 8, 9]),
-            "week_sin": np.sin(2 * np.pi * int(dt.isocalendar().week) / 52),
-            "week_cos": np.cos(2 * np.pi * int(dt.isocalendar().week) / 52),
-        }
-
-        # Lag features from y_buffer (most recent first via negative indexing)
-        lag_map = {1: -1, 2: -2, 4: -4, 8: -8, 12: -12}
-        for lag, idx in lag_map.items():
-            row[f"lag_{lag}w"] = y_buffer[idx] if len(y_buffer) >= abs(idx) else np.nan
-
-        # Rolling stats (over y_buffer, shifted 1 to avoid using the future)
-        for window in (4, 8, 12):
-            vals = y_buffer[-window - 1:-1] if len(y_buffer) > window else y_buffer[:-1]
-            row[f"rolling_mean_{window}w"] = float(np.mean(vals)) if vals else np.nan
-
-        vals_4 = y_buffer[-5:-1] if len(y_buffer) > 4 else y_buffer[:-1]
-        row["rolling_std_4w"] = float(np.std(vals_4, ddof=1)) if len(vals_4) > 1 else 0.0
-        row["trend_signal"] = row["rolling_mean_4w"] - row["rolling_mean_12w"]
-
-        future_rows.append(row)
-        # Placeholder y (will be overwritten in forecast loop); use last known
-        y_buffer.append(y_buffer[-1])
-
-    return pd.DataFrame(future_rows)
+    week = int(week_start.isocalendar().week)
+    row = {
+        "week_of_year": week,
+        "month": week_start.month,
+        "quarter": week_start.quarter,
+        "year": week_start.year,
+        "is_peak_season": int(week_start.month in [6, 7, 8, 9]),
+        "week_sin": np.sin(2 * np.pi * week / 52),
+        "week_cos": np.cos(2 * np.pi * week / 52),
+    }
+    for lag in LAGS:
+        row[f"lag_{lag}w"] = y_history[-lag]
+    for window in (4, 8, 12):
+        row[f"rolling_mean_{window}w"] = float(np.mean(y_history[-window:]))
+    row["rolling_std_4w"] = float(np.std(y_history[-4:], ddof=1))
+    row["trend_signal"] = row["rolling_mean_4w"] - row["rolling_mean_12w"]
+    return row
 
 
 def generate_scenarios(
@@ -139,45 +106,19 @@ def generate_scenarios(
     raw = raw.sort_values("ds").reset_index(drop=True)
     log.info(f"History: {len(raw)} weeks ({raw['ds'].min().date()} to {raw['ds'].max().date()})")
 
-    # Build full feature frame from actuals (for lag buffer initialisation)
     feature_cols = get_feature_columns()
-    history = create_lag_features(raw)
 
     # --- Recursive one-step-ahead forecast ---
     log.info(f"Forecasting {forecast_weeks} weeks ahead (recursive)...")
     forecast_results = []
 
-    # Use full history as the rolling y_buffer for lag construction
-    y_buffer = list(raw["y"].values)
-
+    # Actuals first, then each prediction is appended to feed the next week's lags
+    y_buffer = list(raw["y"].astype(float).values)
     last_date = raw["ds"].max()
 
     for week_offset in range(1, forecast_weeks + 1):
         future_date = last_date + pd.Timedelta(weeks=week_offset)
-        dt = pd.Timestamp(future_date)
-
-        row = {
-            "week_of_year": int(dt.isocalendar().week),
-            "month": dt.month,
-            "quarter": dt.quarter,
-            "year": dt.year,
-            "is_peak_season": int(dt.month in [6, 7, 8, 9]),
-            "week_sin": np.sin(2 * np.pi * int(dt.isocalendar().week) / 52),
-            "week_cos": np.cos(2 * np.pi * int(dt.isocalendar().week) / 52),
-        }
-
-        for lag in (1, 2, 4, 8, 12):
-            row[f"lag_{lag}w"] = y_buffer[-lag] if len(y_buffer) >= lag else np.nan
-
-        for window in (4, 8, 12):
-            vals = y_buffer[-window - 1:-1] if len(y_buffer) > window else y_buffer[:-1]
-            row[f"rolling_mean_{window}w"] = float(np.mean(vals)) if vals else np.nan
-
-        vals_4 = y_buffer[-5:-1] if len(y_buffer) > 4 else y_buffer[:-1]
-        row["rolling_std_4w"] = float(np.std(vals_4, ddof=1)) if len(vals_4) > 1 else 0.0
-        row["trend_signal"] = row.get("rolling_mean_4w", 0) - row.get("rolling_mean_12w", 0)
-
-        X = pd.DataFrame([row])[feature_cols]
+        X = pd.DataFrame([next_week_features(y_buffer, future_date)])[feature_cols]
         baseline_pred = float(max(model.predict(X)[0], 0))
 
         forecast_results.append({
@@ -186,8 +127,6 @@ def generate_scenarios(
             "baseline": round(baseline_pred * SCENARIOS["baseline"], 1),
             "optimistic": round(baseline_pred * SCENARIOS["optimistic"], 1),
         })
-
-        # Feed baseline prediction back into buffer for next week's lags
         y_buffer.append(baseline_pred)
 
     scenarios_df = pd.DataFrame(forecast_results)
