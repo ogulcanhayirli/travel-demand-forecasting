@@ -10,7 +10,7 @@ refuses to ship models whose improvement is within noise.
 The dataset is public and modest. What is being demonstrated is the surrounding
 engineering, not the forecast accuracy.
 
-**Live demo:** [travel-demand-forecasting.streamlit.app](https://travel-demand-forecasting.streamlit.app)
+**Live demo:** [travel-demand-forecasting-hqo7harqkeh6m5fi7fvla4.streamlit.app](https://travel-demand-forecasting-hqo7harqkeh6m5fi7fvla4.streamlit.app/)
 
 ---
 
