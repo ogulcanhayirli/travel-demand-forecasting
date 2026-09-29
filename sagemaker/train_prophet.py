@@ -1,8 +1,7 @@
 """SageMaker training entry point for Prophet.
 
 Identical contract to train_lgbm.py but calls train_prophet instead.
-Prophet is trained on SageMaker (Amazon Linux 2) rather than locally
-because CmdStan compiles cleanly on that platform.
+The same function also runs locally: `python src/models/train_prophet.py`.
 
 Instance recommendation: ml.m5.large (2 vCPU, 8 GB RAM).
 Prophet training on ~100 weeks of data completes in under 2 minutes.
@@ -22,7 +21,9 @@ SM_OUTPUT_DATA_DIR = os.environ.get("SM_OUTPUT_DATA_DIR", "models")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+# In the SageMaker job, src/ sits next to this script; locally it is one level up
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from src.models.train_prophet import train_prophet
 
 

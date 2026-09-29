@@ -10,15 +10,15 @@ Usage
     # Train LightGBM only (fast, runs locally too):
     python sagemaker/launch_training_job.py --model lgbm
 
-    # Train Prophet only (requires SageMaker; CmdStan works on Amazon Linux):
+    # Train Prophet only:
     python sagemaker/launch_training_job.py --model prophet
 
-    # Train both in parallel:
+    # Train both, one after the other:
     python sagemaker/launch_training_job.py --model both
 
 Prerequisites
 -------------
-    pip install sagemaker boto3
+    pip install -r requirements-aws.txt
     AWS credentials configured (aws configure or IAM role)
     .env file with AWS_S3_BUCKET and SAGEMAKER_ROLE_ARN
 
@@ -26,8 +26,9 @@ Why Script Mode?
 ----------------
 SageMaker Script Mode lets you bring your own Python script and run it on a
 managed instance without building a custom Docker image. SageMaker provides
-pre-built containers with sklearn, lightgbm, and other common libraries.
-For Prophet, we use a requirements.txt that gets installed at job start.
+pre-built containers with scikit-learn, pandas and numpy.
+LightGBM and Prophet are not in that container, so sagemaker/requirements.txt
+(installed automatically at job start) adds them.
 """
 from __future__ import annotations
 
@@ -45,12 +46,25 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Config — read from environment (set in .env or export before running)
+# Config: read from environment (set in .env or export before running)
 # ---------------------------------------------------------------------------
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+except ImportError:  # python-dotenv is optional; exported variables still work
+    pass
+
 AWS_REGION = os.environ.get("AWS_REGION", "eu-west-1")
 S3_BUCKET = os.environ.get("AWS_S3_BUCKET", "travel-forecast-ogulcan")
 ROLE_ARN = os.environ.get("SAGEMAKER_ROLE_ARN")
-INSTANCE_TYPE = "ml.m5.large"  # 2 vCPU, 8 GB — sufficient for this dataset size
+INSTANCE_TYPE = "ml.m5.large"  # 2 vCPU, 8 GB, sufficient for this dataset size
+FRAMEWORK_VERSION = "1.4-2"
+# The entry points import the shared training code from src/, which lives
+# outside source_dir. SageMaker copies each dependency into the job's code
+# directory next to the entry point.
+SAGEMAKER_DIR = Path(__file__).resolve().parent
+SRC_DIR = SAGEMAKER_DIR.parent / "src"
 
 
 def upload_data_to_s3(local_path: str, s3_prefix: str = "data/processed") -> str:
@@ -73,21 +87,20 @@ def upload_data_to_s3(local_path: str, s3_prefix: str = "data/processed") -> str
 
 def launch_lgbm_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn:
     """Submit a SageMaker training job for LightGBM and wait for it."""
-    job_name = f"lgbm-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"lgbm-travel-demand-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     log.info(f"Launching LightGBM job: {job_name}")
 
     estimator = SKLearn(
         entry_point="train_lgbm.py",
-        source_dir=str(Path(__file__).parent),
+        source_dir=str(SAGEMAKER_DIR),
+        dependencies=[str(SRC_DIR)],
         role=ROLE_ARN,
         instance_type=INSTANCE_TYPE,
-        framework_version="1.2-1",
+        framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=session,
-        job_name=job_name,
         hyperparameters={"test_size": 12},
         output_path=f"s3://{S3_BUCKET}/models/lgbm",
-        base_job_name="lgbm-travel-demand",
         # Metric definitions let SageMaker push these to CloudWatch automatically
         metric_definitions=[
             {"Name": "lgbm:mape", "Regex": r"mape=([0-9\.]+)"},
@@ -96,28 +109,28 @@ def launch_lgbm_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn:
         ],
     )
 
-    estimator.fit({"train": s3_input_uri}, wait=True, logs="All")
+    # job_name is a fit() argument; the estimator constructor ignores it
+    estimator.fit({"train": s3_input_uri}, job_name=job_name, wait=True, logs="All")
     log.info(f"LightGBM job complete. Model at: {estimator.model_data}")
     return estimator
 
 
 def launch_prophet_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn:
     """Submit a SageMaker training job for Prophet and wait for it."""
-    job_name = f"prophet-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"prophet-travel-demand-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     log.info(f"Launching Prophet job: {job_name}")
 
     estimator = SKLearn(
         entry_point="train_prophet.py",
-        source_dir=str(Path(__file__).parent),
+        source_dir=str(SAGEMAKER_DIR),
+        dependencies=[str(SRC_DIR)],
         role=ROLE_ARN,
         instance_type=INSTANCE_TYPE,
-        framework_version="1.2-1",
+        framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=session,
-        job_name=job_name,
         hyperparameters={"test_size": 12},
         output_path=f"s3://{S3_BUCKET}/models/prophet",
-        base_job_name="prophet-travel-demand",
         metric_definitions=[
             {"Name": "prophet:mape", "Regex": r"mape=([0-9\.]+)"},
             {"Name": "prophet:mae",  "Regex": r"mae=([0-9\.]+)"},
@@ -125,7 +138,8 @@ def launch_prophet_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn
         ],
     )
 
-    estimator.fit({"train": s3_input_uri}, wait=True, logs="All")
+    # job_name is a fit() argument; the estimator constructor ignores it
+    estimator.fit({"train": s3_input_uri}, job_name=job_name, wait=True, logs="All")
     log.info(f"Prophet job complete. Model at: {estimator.model_data}")
     return estimator
 
@@ -154,7 +168,7 @@ def main():
     boto_session = boto3.Session(region_name=AWS_REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
 
-    # Upload data to S3 once — both jobs share the same input URI
+    # Upload data to S3 once; both jobs share the same input URI
     s3_input_uri = upload_data_to_s3(args.data)
 
     if args.model in ("lgbm", "both"):

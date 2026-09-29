@@ -54,6 +54,8 @@ ROLE_ARN = os.environ.get("SAGEMAKER_ROLE_ARN")
 INSTANCE_TYPE = "ml.m5.large"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAGEMAKER_DIR = PROJECT_ROOT / "sagemaker"
+SRC_DIR = PROJECT_ROOT / "src"  # shipped with the job, see launch_training_job.py
+FRAMEWORK_VERSION = "1.4-2"
 
 DEFAULT_ARGS = {
     "owner": "ml-team",
@@ -71,8 +73,9 @@ def ingest_data(**context):
     """Upload the latest weekly_demand.csv to S3.
 
     In a real pipeline this task would first pull fresh booking data from
-    the source database, run the aggregation to produce weekly_demand.csv,
-    then upload. Here we upload the existing processed file.
+    the source database and run src/data/build_weekly_demand.py (which drops
+    any week not fully covered by the extract), then upload. Here we upload
+    the existing processed file.
     """
     import boto3
 
@@ -120,7 +123,7 @@ def validate_data(**context):
 def train_lgbm(**context):
     """Submit LightGBM SageMaker training job and push model S3 URI to XCom."""
     s3_input_uri = context["ti"].xcom_pull(task_ids="ingest_data", key="s3_input_uri")
-    job_name = f"lgbm-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"lgbm-travel-demand-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     boto_session = boto3.Session(region_name=AWS_REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
@@ -128,12 +131,12 @@ def train_lgbm(**context):
     estimator = SKLearn(
         entry_point="train_lgbm.py",
         source_dir=str(SAGEMAKER_DIR),
+        dependencies=[str(SRC_DIR)],
         role=ROLE_ARN,
         instance_type=INSTANCE_TYPE,
-        framework_version="1.2-1",
+        framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=sm_session,
-        job_name=job_name,
         hyperparameters={"test_size": 12},
         output_path=f"s3://{S3_BUCKET}/models/lgbm",
         metric_definitions=[
@@ -141,7 +144,8 @@ def train_lgbm(**context):
             {"Name": "lgbm:mae",  "Regex": r"mae=([0-9\.]+)"},
         ],
     )
-    estimator.fit({"train": s3_input_uri}, wait=True, logs="All")
+    # job_name is a fit() argument; the estimator constructor ignores it
+    estimator.fit({"train": s3_input_uri}, job_name=job_name, wait=True, logs="All")
 
     context["ti"].xcom_push(key="lgbm_model_uri", value=estimator.model_data)
     log.info(f"LightGBM training complete. Model: {estimator.model_data}")
@@ -150,7 +154,7 @@ def train_lgbm(**context):
 def train_prophet(**context):
     """Submit Prophet SageMaker training job and push model S3 URI to XCom."""
     s3_input_uri = context["ti"].xcom_pull(task_ids="ingest_data", key="s3_input_uri")
-    job_name = f"prophet-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"prophet-travel-demand-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     boto_session = boto3.Session(region_name=AWS_REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
@@ -158,12 +162,12 @@ def train_prophet(**context):
     estimator = SKLearn(
         entry_point="train_prophet.py",
         source_dir=str(SAGEMAKER_DIR),
+        dependencies=[str(SRC_DIR)],
         role=ROLE_ARN,
         instance_type=INSTANCE_TYPE,
-        framework_version="1.2-1",
+        framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=sm_session,
-        job_name=job_name,
         hyperparameters={"test_size": 12},
         output_path=f"s3://{S3_BUCKET}/models/prophet",
         metric_definitions=[
@@ -171,7 +175,8 @@ def train_prophet(**context):
             {"Name": "prophet:mae",  "Regex": r"mae=([0-9\.]+)"},
         ],
     )
-    estimator.fit({"train": s3_input_uri}, wait=True, logs="All")
+    # job_name is a fit() argument; the estimator constructor ignores it
+    estimator.fit({"train": s3_input_uri}, job_name=job_name, wait=True, logs="All")
 
     context["ti"].xcom_push(key="prophet_model_uri", value=estimator.model_data)
     log.info(f"Prophet training complete. Model: {estimator.model_data}")
@@ -207,19 +212,20 @@ def evaluate_models(**context):
 
     # Treat LightGBM as champion (current production model),
     # Prophet as challenger (newly trained). This is arbitrary for the
-    # first run — in production, the champion is whichever model is
+    # first run. In production, the champion is whichever model is
     # currently registered as APPROVED in SageMaker Model Registry.
-    champion = lgbm_metrics
-    challenger = prophet_metrics
+    # Run the same tested rule as src/models/evaluate.py (>= 2pp MAPE).
+    import tempfile
 
-    if challenger["mape"] < champion["mape"] - 2.0:
-        promote = True
-        log.info(f"PROMOTE: Prophet MAPE {challenger['mape']:.2f}% beats "
-                 f"LightGBM {champion['mape']:.2f}% by >2pp")
-    else:
-        promote = False
-        log.info(f"RETAIN: LightGBM MAPE {champion['mape']:.2f}% — "
-                 f"Prophet {challenger['mape']:.2f}% does not meet threshold")
+    with tempfile.TemporaryDirectory() as tmp:
+        champion_path = Path(tmp) / "champion.json"
+        challenger_path = Path(tmp) / "challenger.json"
+        champion_path.write_text(json.dumps(lgbm_metrics))
+        challenger_path.write_text(json.dumps(prophet_metrics))
+        decision = evaluate_champion_challenger(
+            str(champion_path), str(challenger_path), str(Path(tmp) / "decision.json")
+        )
+    promote = decision["promote"]
 
     context["ti"].xcom_push(key="promote", value=promote)
     context["ti"].xcom_push(key="winning_model", value="prophet" if promote else "lgbm")

@@ -1,0 +1,6 @@
+# Dependencies to launch the SageMaker training jobs from your machine:
+#   python sagemaker/launch_training_job.py --model both
+# The jobs themselves install sagemaker/requirements.txt inside the container.
+sagemaker==2.257.6
+boto3==1.43.104
+python-dotenv==1.0.1

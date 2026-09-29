@@ -1,0 +1,14 @@
+{
+  "model": "prophet",
+  "test_size_weeks": 12,
+  "mape": 7.6561,
+  "mae": 57.6047,
+  "rmse": 82.7653,
+  "train_weeks": 100,
+  "test_weeks": 12,
+  "train_start": "2015-07-06",
+  "train_end": "2017-05-29",
+  "test_start": "2017-06-05",
+  "test_end": "2017-08-21",
+  "forecast_horizon": "1-12 weeks ahead"
+}

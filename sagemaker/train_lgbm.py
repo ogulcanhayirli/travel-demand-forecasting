@@ -32,8 +32,10 @@ SM_OUTPUT_DATA_DIR = os.environ.get("SM_OUTPUT_DATA_DIR", "models")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# Make project src importable (handles both SageMaker and local execution)
+# Make project src importable: in the SageMaker job src/ sits next to this
+# script, locally it is one level up
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from src.models.train_lightgbm import train_lightgbm
 
 

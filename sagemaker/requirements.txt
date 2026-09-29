@@ -1,0 +1,6 @@
+# Installed by the SageMaker SKLearn container at job start.
+# The container already provides pandas, numpy and scikit-learn.
+lightgbm==4.6.0
+prophet==1.1.7
+# cmdstanpy 1.3 rejects the CmdStan bundled in prophet 1.1.x wheels
+cmdstanpy==1.2.5
