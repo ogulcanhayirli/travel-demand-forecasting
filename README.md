@@ -39,10 +39,10 @@ This project answers: *"How many bookings should we plan for over the next 6 mon
 |-----------|-------|
 | Weekly aggregation, features, LightGBM, Prophet, baselines, champion-challenger rule | Implemented and run locally; results below |
 | Scenario forecasts and Streamlit dashboard | Implemented and run locally |
-| Unit tests | 36 tests, run by GitHub Actions on every push and pull request |
+| Unit tests | 45 tests, run by GitHub Actions on every push and pull request |
 | SageMaker Script Mode entry points (`sagemaker/`) | Run on SageMaker once, launched manually (29 September 2026); both jobs succeeded (see below) |
 | Airflow DAG (`airflow/dags/`) | Defined. **Not yet run.** The Model Registry step only logs, and the evaluate step reads metrics from S3 keys the jobs do not write yet (they end up inside `output.tar.gz`) |
-| Drift monitoring (`src/monitoring/`) | Not implemented yet. PSI is computed in the EDA notebook only |
+| Drift monitoring (`src/monitoring/`) | PSI drift check implemented and unit tested, with a command line entry point. Not yet wired into the Airflow DAG or run on new data |
 
 ---
 
@@ -180,7 +180,7 @@ travel-demand-forecasting/
     scenarios/
       scenario_generator.py  26-week recursive forecast, 3 scenario tracks
     monitoring/
-      drift_detector.py Placeholder, not implemented yet
+      drift_detector.py PSI drift check between a reference and a new sample
   sagemaker/
     train_lgbm.py       SageMaker entry point for LightGBM (/opt/ml contract)
     train_prophet.py    SageMaker entry point for Prophet
@@ -192,8 +192,8 @@ travel-demand-forecasting/
   dashboard/
     app.py              Streamlit scenario explorer with Plotly charts
     requirements.txt    Pinned dashboard dependencies for Streamlit Cloud
-  tests/                36 unit tests: aggregation, features, leakage, baselines,
-                        scenario features, metrics, promotion rule
+  tests/                45 unit tests: aggregation, features, leakage, baselines,
+                        scenario features, metrics, promotion rule, drift check
   models/
     lgbm_metrics.json        LightGBM and naive baseline metrics
     prophet_metrics.json     Prophet metrics
@@ -277,6 +277,22 @@ python sagemaker/launch_training_job.py --model both   # one after the other
 pip install -r requirements-dev.txt
 pytest -v
 ```
+
+---
+
+## Drift Check
+
+`src/monitoring/drift_detector.py` computes the Population Stability Index between a
+reference sample (for example the training data) and new data, using the reference's
+quantiles as bins. PSI above 0.2 (set with `PSI_THRESHOLD`) is reported as drift and the
+command exits with code 1, so a scheduler can act on it.
+
+```bash
+python src/monitoring/drift_detector.py \
+    --reference data/processed/weekly_demand.csv --current path/to/new_weekly_demand.csv
+```
+
+It is not yet called from the Airflow DAG.
 
 ---
 
