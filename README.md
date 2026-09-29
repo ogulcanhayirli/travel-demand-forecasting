@@ -131,7 +131,6 @@ travel-demand-forecasting/
   models/
     lgbm_metrics.json   Latest evaluation metrics (committed for dashboard)
   requirements.txt      Full project dependencies
-  SETUP_CHECKLIST.md    Step-by-step environment and AWS setup guide
 ```
 
 ---
@@ -168,7 +167,7 @@ streamlit run dashboard/app.py
 ## How to Run on AWS SageMaker
 
 ```bash
-# Configure AWS credentials and .env file first (see SETUP_CHECKLIST.md)
+# Configure AWS credentials (aws configure) and copy .env.example to .env first
 
 # Train LightGBM on a managed ml.m5.large instance
 python sagemaker/launch_training_job.py --model lgbm
