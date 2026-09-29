@@ -40,8 +40,8 @@ This project answers: *"How many bookings should we plan for over the next 6 mon
 | Weekly aggregation, features, LightGBM, Prophet, baselines, champion-challenger rule | Implemented and run locally; results below |
 | Scenario forecasts and Streamlit dashboard | Implemented and run locally |
 | Unit tests | 36 tests, run by GitHub Actions on every push and pull request |
-| SageMaker Script Mode entry points (`sagemaker/`) | Written and tested in a local simulation of the SageMaker job (see below). **Not yet run on SageMaker.** |
-| Airflow DAG (`airflow/dags/`) | Defined. **Not yet run**: it depends on the SageMaker jobs, and the Model Registry step only logs |
+| SageMaker Script Mode entry points (`sagemaker/`) | Run on SageMaker once, launched manually (29 September 2026); both jobs succeeded (see below) |
+| Airflow DAG (`airflow/dags/`) | Defined. **Not yet run.** The Model Registry step only logs, and the evaluate step reads metrics from S3 keys the jobs do not write yet (they end up inside `output.tar.gz`) |
 | Drift monitoring (`src/monitoring/`) | Not implemented yet. PSI is computed in the EDA notebook only |
 
 ---
@@ -244,13 +244,22 @@ streamlit run dashboard/app.py
 points that follow the `/opt/ml` directory contract and call the same training
 functions as the local scripts. Each job runs on the SKLearn `1.4-2` container, ships
 `src/` alongside the entry point, and installs `sagemaker/requirements.txt`
-(lightgbm, prophet) at start. **They have not yet been run on SageMaker.**
+(lightgbm, prophet) at start.
 
-What has been checked without AWS: the job bundle was built with the SageMaker SDK's
-own packaging function and both entry points were run from inside it, in a Python 3.12
-environment with the container's pandas version plus `sagemaker/requirements.txt`.
-LightGBM reproduced the metrics above exactly. Prophet gave 7.69% MAPE instead of
-7.66%, because the container uses prophet 1.1.7 while the local runs used 1.4.0.
+Both jobs were run once on SageMaker on 29 September 2026, launched manually with
+`launch_training_job.py --model both` in `us-east-1` on `ml.m5.large` instances:
+
+| Job      | Result    | Billable time | Metrics printed by the job                 |
+|----------|-----------|---------------|--------------------------------------------|
+| LightGBM | Completed | 94 s          | MAPE 5.7519%, MAE 42.3961, RMSE 53.8329    |
+| Prophet  | Completed | 99 s          | MAPE 7.6853%, MAE 57.8214, RMSE 82.9636    |
+
+LightGBM matches the local run exactly. Prophet differs slightly from the local 7.66%
+because the container installs prophet 1.1.7 (Python 3.10, pandas 2.3.2) while the
+local runs used prophet 1.4.0; Prophet warns that its fit on under two years of history
+depends on the Prophet/Stan version. The promotion decision is the same either way.
+The model artifacts were written to the S3 bucket as `model.tar.gz`. The jobs are not
+scheduled; the Airflow DAG that would schedule them has not been run.
 
 ```bash
 # Configure AWS credentials (aws configure) and copy .env.example to .env first
@@ -279,7 +288,7 @@ pytest -v
 | Feature engineering| pandas, numpy                                   |
 | Dashboard          | Streamlit, Plotly                               |
 | Testing and CI     | pytest, GitHub Actions                          |
-| Cloud training     | AWS SageMaker Script Mode (entry points written, not yet run) |
+| Cloud training     | AWS SageMaker Script Mode (run manually once, not scheduled) |
 | Orchestration      | Apache Airflow (DAG defined, not yet run)       |
 
 ---

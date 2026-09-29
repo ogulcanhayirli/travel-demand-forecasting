@@ -123,7 +123,7 @@ def validate_data(**context):
 def train_lgbm(**context):
     """Submit LightGBM SageMaker training job and push model S3 URI to XCom."""
     s3_input_uri = context["ti"].xcom_pull(task_ids="ingest_data", key="s3_input_uri")
-    job_name = f"lgbm-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"lgbm-travel-demand-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     boto_session = boto3.Session(region_name=AWS_REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
@@ -137,7 +137,6 @@ def train_lgbm(**context):
         framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=sm_session,
-        job_name=job_name,
         hyperparameters={"test_size": 12},
         output_path=f"s3://{S3_BUCKET}/models/lgbm",
         metric_definitions=[
@@ -145,7 +144,8 @@ def train_lgbm(**context):
             {"Name": "lgbm:mae",  "Regex": r"mae=([0-9\.]+)"},
         ],
     )
-    estimator.fit({"train": s3_input_uri}, wait=True, logs="All")
+    # job_name is a fit() argument; the estimator constructor ignores it
+    estimator.fit({"train": s3_input_uri}, job_name=job_name, wait=True, logs="All")
 
     context["ti"].xcom_push(key="lgbm_model_uri", value=estimator.model_data)
     log.info(f"LightGBM training complete. Model: {estimator.model_data}")
@@ -154,7 +154,7 @@ def train_lgbm(**context):
 def train_prophet(**context):
     """Submit Prophet SageMaker training job and push model S3 URI to XCom."""
     s3_input_uri = context["ti"].xcom_pull(task_ids="ingest_data", key="s3_input_uri")
-    job_name = f"prophet-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"prophet-travel-demand-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     boto_session = boto3.Session(region_name=AWS_REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
@@ -168,7 +168,6 @@ def train_prophet(**context):
         framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=sm_session,
-        job_name=job_name,
         hyperparameters={"test_size": 12},
         output_path=f"s3://{S3_BUCKET}/models/prophet",
         metric_definitions=[
@@ -176,7 +175,8 @@ def train_prophet(**context):
             {"Name": "prophet:mae",  "Regex": r"mae=([0-9\.]+)"},
         ],
     )
-    estimator.fit({"train": s3_input_uri}, wait=True, logs="All")
+    # job_name is a fit() argument; the estimator constructor ignores it
+    estimator.fit({"train": s3_input_uri}, job_name=job_name, wait=True, logs="All")
 
     context["ti"].xcom_push(key="prophet_model_uri", value=estimator.model_data)
     log.info(f"Prophet training complete. Model: {estimator.model_data}")

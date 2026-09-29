@@ -87,7 +87,7 @@ def upload_data_to_s3(local_path: str, s3_prefix: str = "data/processed") -> str
 
 def launch_lgbm_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn:
     """Submit a SageMaker training job for LightGBM and wait for it."""
-    job_name = f"lgbm-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"lgbm-travel-demand-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     log.info(f"Launching LightGBM job: {job_name}")
 
     estimator = SKLearn(
@@ -99,10 +99,8 @@ def launch_lgbm_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn:
         framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=session,
-        job_name=job_name,
         hyperparameters={"test_size": 12},
         output_path=f"s3://{S3_BUCKET}/models/lgbm",
-        base_job_name="lgbm-travel-demand",
         # Metric definitions let SageMaker push these to CloudWatch automatically
         metric_definitions=[
             {"Name": "lgbm:mape", "Regex": r"mape=([0-9\.]+)"},
@@ -111,14 +109,15 @@ def launch_lgbm_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn:
         ],
     )
 
-    estimator.fit({"train": s3_input_uri}, wait=True, logs="All")
+    # job_name is a fit() argument; the estimator constructor ignores it
+    estimator.fit({"train": s3_input_uri}, job_name=job_name, wait=True, logs="All")
     log.info(f"LightGBM job complete. Model at: {estimator.model_data}")
     return estimator
 
 
 def launch_prophet_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn:
     """Submit a SageMaker training job for Prophet and wait for it."""
-    job_name = f"prophet-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"prophet-travel-demand-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     log.info(f"Launching Prophet job: {job_name}")
 
     estimator = SKLearn(
@@ -130,10 +129,8 @@ def launch_prophet_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn
         framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=session,
-        job_name=job_name,
         hyperparameters={"test_size": 12},
         output_path=f"s3://{S3_BUCKET}/models/prophet",
-        base_job_name="prophet-travel-demand",
         metric_definitions=[
             {"Name": "prophet:mape", "Regex": r"mape=([0-9\.]+)"},
             {"Name": "prophet:mae",  "Regex": r"mae=([0-9\.]+)"},
@@ -141,7 +138,8 @@ def launch_prophet_job(s3_input_uri: str, session: sagemaker.Session) -> SKLearn
         ],
     )
 
-    estimator.fit({"train": s3_input_uri}, wait=True, logs="All")
+    # job_name is a fit() argument; the estimator constructor ignores it
+    estimator.fit({"train": s3_input_uri}, job_name=job_name, wait=True, logs="All")
     log.info(f"Prophet job complete. Model at: {estimator.model_data}")
     return estimator
 
