@@ -1,27 +1,40 @@
 {
   "model": "lightgbm",
   "test_size_weeks": 12,
-  "mape": 11.1511,
-  "mae": 58.4359,
-  "rmse": 104.6271,
-  "best_iteration": 9,
+  "mape": 5.7519,
+  "mae": 42.3961,
+  "rmse": 53.8329,
+  "best_iteration": 39,
+  "early_stopping_val_weeks": 12,
   "n_features": 17,
-  "train_weeks": 90,
+  "train_weeks": 88,
   "test_weeks": 12,
-  "train_start": "2015-09-21",
-  "train_end": "2017-06-05",
-  "test_start": "2017-06-12",
-  "test_end": "2017-08-28",
+  "train_start": "2015-09-28",
+  "train_end": "2017-05-29",
+  "test_start": "2017-06-05",
+  "test_end": "2017-08-21",
+  "baselines": {
+    "naive_lag1": {
+      "mape": 5.2709,
+      "mae": 38.0833,
+      "rmse": 54.2794
+    },
+    "naive_lag52": {
+      "mape": 8.7185,
+      "mae": 65.3333,
+      "rmse": 81.6435
+    }
+  },
   "top_features": {
-    "trend_signal": 13,
-    "rolling_std_4w": 11,
-    "lag_4w": 11,
-    "week_cos": 10,
-    "year": 7,
-    "lag_1w": 7,
-    "lag_8w": 5,
-    "lag_2w": 4,
-    "week_sin": 4,
-    "week_of_year": 3
+    "rolling_std_4w": 49,
+    "week_cos": 44,
+    "lag_1w": 41,
+    "lag_4w": 33,
+    "lag_2w": 33,
+    "week_sin": 27,
+    "trend_signal": 25,
+    "rolling_mean_8w": 25,
+    "lag_12w": 23,
+    "lag_8w": 22
   }
 }
