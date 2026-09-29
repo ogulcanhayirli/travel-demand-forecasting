@@ -54,6 +54,8 @@ ROLE_ARN = os.environ.get("SAGEMAKER_ROLE_ARN")
 INSTANCE_TYPE = "ml.m5.large"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAGEMAKER_DIR = PROJECT_ROOT / "sagemaker"
+SRC_DIR = PROJECT_ROOT / "src"  # shipped with the job, see launch_training_job.py
+FRAMEWORK_VERSION = "1.4-2"
 
 DEFAULT_ARGS = {
     "owner": "ml-team",
@@ -129,9 +131,10 @@ def train_lgbm(**context):
     estimator = SKLearn(
         entry_point="train_lgbm.py",
         source_dir=str(SAGEMAKER_DIR),
+        dependencies=[str(SRC_DIR)],
         role=ROLE_ARN,
         instance_type=INSTANCE_TYPE,
-        framework_version="1.2-1",
+        framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=sm_session,
         job_name=job_name,
@@ -159,9 +162,10 @@ def train_prophet(**context):
     estimator = SKLearn(
         entry_point="train_prophet.py",
         source_dir=str(SAGEMAKER_DIR),
+        dependencies=[str(SRC_DIR)],
         role=ROLE_ARN,
         instance_type=INSTANCE_TYPE,
-        framework_version="1.2-1",
+        framework_version=FRAMEWORK_VERSION,
         py_version="py3",
         sagemaker_session=sm_session,
         job_name=job_name,

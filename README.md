@@ -40,7 +40,7 @@ This project answers: *"How many bookings should we plan for over the next 6 mon
 | Weekly aggregation, features, LightGBM, Prophet, baselines, champion-challenger rule | Implemented and run locally; results below |
 | Scenario forecasts and Streamlit dashboard | Implemented and run locally |
 | Unit tests | 36 tests, run by GitHub Actions on every push and pull request |
-| SageMaker Script Mode entry points (`sagemaker/`) | Written and run locally through their fallback paths. **Not yet run on SageMaker.** |
+| SageMaker Script Mode entry points (`sagemaker/`) | Written and tested in a local simulation of the SageMaker job (see below). **Not yet run on SageMaker.** |
 | Airflow DAG (`airflow/dags/`) | Defined. **Not yet run**: it depends on the SageMaker jobs, and the Model Registry step only logs |
 | Drift monitoring (`src/monitoring/`) | Not implemented yet. PSI is computed in the EDA notebook only |
 
@@ -185,6 +185,7 @@ travel-demand-forecasting/
     train_lgbm.py       SageMaker entry point for LightGBM (/opt/ml contract)
     train_prophet.py    SageMaker entry point for Prophet
     launch_training_job.py  Uploads data to S3, submits SKLearn training jobs
+    requirements.txt    Installed inside the training container (lightgbm, prophet)
   airflow/
     dags/
       forecast_pipeline.py  Weekly DAG: ingest, validate, train, evaluate, branch
@@ -198,6 +199,7 @@ travel-demand-forecasting/
     prophet_metrics.json     Prophet metrics
     promotion_decision.json  Champion-challenger decision
   requirements-dev.txt  Minimal dependencies to run the tests
+  requirements-aws.txt  Dependencies to launch the SageMaker jobs
   requirements.txt      Full project dependencies (includes Airflow, SageMaker SDK, MLflow)
 ```
 
@@ -240,14 +242,19 @@ streamlit run dashboard/app.py
 
 `sagemaker/train_lgbm.py` and `sagemaker/train_prophet.py` are Script Mode entry
 points that follow the `/opt/ml` directory contract and call the same training
-functions as the local scripts. They have been run locally through their fallback
-paths and reproduce the metrics above. **They have not yet been run on SageMaker.**
-Before a first cloud run, the job needs the `src/` package and the lightgbm/prophet
-dependencies available inside the SKLearn container; `launch_training_job.py`
-currently uploads only the `sagemaker/` directory.
+functions as the local scripts. Each job runs on the SKLearn `1.4-2` container, ships
+`src/` alongside the entry point, and installs `sagemaker/requirements.txt`
+(lightgbm, prophet) at start. **They have not yet been run on SageMaker.**
+
+What has been checked without AWS: the job bundle was built with the SageMaker SDK's
+own packaging function and both entry points were run from inside it, in a Python 3.12
+environment with the container's pandas version plus `sagemaker/requirements.txt`.
+LightGBM reproduced the metrics above exactly. Prophet gave 7.69% MAPE instead of
+7.66%, because the container uses prophet 1.1.7 while the local runs used 1.4.0.
 
 ```bash
 # Configure AWS credentials (aws configure) and copy .env.example to .env first
+pip install -r requirements-aws.txt
 python sagemaker/launch_training_job.py --model lgbm
 python sagemaker/launch_training_job.py --model prophet
 python sagemaker/launch_training_job.py --model both   # one after the other
